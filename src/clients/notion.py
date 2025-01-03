@@ -4,6 +4,7 @@ from notion_client import Client
 from datetime import datetime
 from loguru import logger
 import requests
+import json
 
 class NotionClient:
     def __init__(self):
@@ -15,48 +16,129 @@ class NotionClient:
     def create_or_update_document(self, document: Dict, document_file: bytes = None, filename: str = None) -> Dict:
         """Create or update a document in Notion"""
         try:
+            # Debug log the document structure and type
+            logger.debug(f"Document type: {type(document)}")
+            logger.debug(f"Document data: {json.dumps(document, indent=2, default=str)}")
+            
+            # Validate document structure
+            if not isinstance(document, dict):
+                raise ValueError(f"Document is not a dictionary, it is a {type(document)}")
+            if 'id' not in document:
+                raise ValueError("Document does not contain 'id'")
+
+            # Log document ID and type
+            logger.debug(f"Document ID: {document['id']} (type: {type(document['id'])})")
+
             # Check if document already exists
-            results = self.client.databases.query(
-                database_id=self.documents_db,
-                filter={
-                    "property": "paperless_id",
-                    "number": {"equals": document["id"]}
-                }
-            )
+            try:
+                results = self.client.databases.query(
+                    database_id=self.documents_db,
+                    filter={
+                        "property": "paperless_id",
+                        "number": {"equals": document["id"]}
+                    }
+                )
+                logger.debug(f"Query results type: {type(results)}")
+                logger.debug(f"Query results: {json.dumps(results, indent=2)}")
+            except Exception as e:
+                logger.error(f"Error querying database: {e}")
+                raise
+
+            # Convert dates to ISO format if they're not already
+            created_date = document.get("created", "")
+            logger.debug(f"Created date before processing: {created_date} (type: {type(created_date)})")
+            
+            if isinstance(created_date, (int, float)):
+                created_date = datetime.fromtimestamp(created_date).isoformat()
+            elif isinstance(created_date, str):
+                try:
+                    created_date = datetime.fromisoformat(created_date).isoformat()
+                except ValueError:
+                    created_date = None
+            
+            added_date = document.get("added", "")
+            logger.debug(f"Added date before processing: {added_date} (type: {type(added_date)})")
+            
+            if isinstance(added_date, (int, float)):
+                added_date = datetime.fromtimestamp(added_date).isoformat()
+            elif isinstance(added_date, str):
+                try:
+                    added_date = datetime.fromisoformat(added_date).isoformat()
+                except ValueError:
+                    added_date = None
+
+            # Debug log the processed dates
+            logger.debug(f"Processed dates - created: {created_date}, added: {added_date}")
 
             properties = {
-                "Title": {"title": [{"text": {"content": document["title"]}}]},
+                "Title": {"title": [{"text": {"content": str(document.get("title", "Untitled"))}}]},
                 "paperless_id": {"number": document["id"]},
-                "Created Date": {"date": {"start": document["created"]}},
-                "Added Date": {"date": {"start": document["added"]}},
-                "Archived": {"checkbox": False}  # Set document as not archived
             }
 
+            if created_date:
+                properties["Created Date"] = {"date": {"start": created_date}}
+            if added_date:
+                properties["Added Date"] = {"date": {"start": added_date}}
+            
+            properties["Archived"] = {"checkbox": False}
+
+            # Debug log the properties
+            logger.debug(f"Properties before relations: {json.dumps(properties, indent=2)}")
+
             if document.get("correspondent"):
-                properties["Correspondent"] = {
-                    "relation": [{"id": self._get_correspondent_page_id(document["correspondent"]["id"])}]
-                }
+                try:
+                    logger.debug(f"Correspondent data: {json.dumps(document['correspondent'], indent=2)}")
+                    correspondent_data = document["correspondent"]
+                    if isinstance(correspondent_data, (int, str)):
+                        correspondent_id = self._get_correspondent_page_id(int(correspondent_data))
+                    else:
+                        correspondent_id = self._get_correspondent_page_id(correspondent_data.get("id"))
+                    properties["Correspondent"] = {
+                        "relation": [{"id": correspondent_id}]
+                    }
+                except Exception as e:
+                    logger.warning(f"Could not link correspondent: {e}")
 
             if document.get("tags"):
-                properties["Tags"] = {
-                    "relation": [{"id": self._get_tag_page_id(tag["id"])} for tag in document["tags"]]
-                }
+                try:
+                    logger.debug(f"Tags data: {json.dumps(document['tags'], indent=2)}")
+                    tag_ids = []
+                    for tag in document["tags"]:
+                        if isinstance(tag, (int, str)):
+                            tag_id = self._get_tag_page_id(int(tag))
+                        else:
+                            tag_id = self._get_tag_page_id(tag.get("id"))
+                        tag_ids.append(tag_id)
+                    
+                    if tag_ids:
+                        properties["Tags"] = {
+                            "relation": [{"id": tag_id} for tag_id in tag_ids]
+                        }
+                except Exception as e:
+                    logger.warning(f"Could not link tags: {e}")
 
             # Handle file upload if provided
             if document_file and filename:
-                # First, upload the file to Notion's S3
-                upload_response = self._upload_file_to_notion(document_file, filename)
-                
-                # Add file property
-                properties["File"] = {
-                    "files": [{
-                        "type": "external",
-                        "name": filename,
-                        "external": {
-                            "url": upload_response["url"]
-                        }
-                    }]
-                }
+                try:
+                    # Get file properties with document ID
+                    file_props = self._upload_file_to_notion(document_file, filename, document["id"])
+                    logger.debug(f"File properties: {json.dumps(file_props, indent=2)}")
+                    
+                    # Add file property
+                    properties["File"] = {
+                        "files": [{
+                            "type": "external",
+                            "name": file_props["name"],
+                            "external": {
+                                "url": file_props["url"]
+                            }
+                        }]
+                    }
+                except Exception as e:
+                    logger.warning(f"Could not handle file: {e}")
+
+            # Debug log final properties
+            logger.debug(f"Final properties: {json.dumps(properties, indent=2)}")
 
             if results["results"]:
                 # Update existing page
@@ -113,27 +195,32 @@ class NotionClient:
             logger.error(f"Error archiving document in Notion: {e}")
             raise
 
-    def _upload_file_to_notion(self, file_content: bytes, filename: str) -> Dict:
-        """Upload a file to Notion's S3 storage"""
+    def _upload_file_to_notion(self, file_content: bytes, filename: str, document_id: int) -> Dict:
+        """Create a direct URL to the document in Paperless-NGX"""
         try:
-            # Get upload URL from Notion
-            response = self.client.files.upload({
-                "filename": filename,
-                "type": "pdf"  # Assuming PDF files from Paperless-NGX
-            })
-
-            # Upload the file to the provided S3 URL
-            upload_url = response["upload_url"]
-            s3_response = requests.put(
-                upload_url,
-                data=file_content,
-                headers={"Content-Type": "application/pdf"}
-            )
-            s3_response.raise_for_status()
-
-            return response
+            # Use the actual Paperless-NGX download URL
+            paperless_url = os.getenv("PAPERLESS_URL").rstrip("/")
+            download_url = f"{paperless_url}/api/documents/{document_id}/download/"
+            
+            # Truncate filename if it's too long (Notion has a 100-char limit)
+            if len(filename) > 100:
+                name, ext = os.path.splitext(filename)
+                # Leave room for the extension and ellipsis
+                max_name_length = 96 - len(ext)  # 100 - 3 (...) - len(ext)
+                truncated_name = name[:max_name_length] + "..."
+                display_name = truncated_name + ext
+                logger.debug(f"Truncated filename from {filename} to {display_name}")
+            else:
+                display_name = filename
+            
+            properties = {
+                "url": download_url,
+                "name": display_name
+            }
+            
+            return properties
         except Exception as e:
-            logger.error(f"Error uploading file to Notion: {e}")
+            logger.error(f"Error handling file for Notion: {e}")
             raise
 
     def create_or_update_tag(self, tag: Dict) -> Dict:
@@ -199,6 +286,12 @@ class NotionClient:
 
     def _get_tag_page_id(self, paperless_id: int) -> str:
         """Get Notion page ID for a tag by its Paperless ID"""
+        # Ensure paperless_id is an integer
+        if isinstance(paperless_id, dict):
+            paperless_id = paperless_id.get('id')
+        paperless_id = int(paperless_id)
+        
+        logger.debug(f"Getting tag page ID for paperless_id: {paperless_id}")
         results = self.client.databases.query(
             database_id=self.tags_db,
             filter={"property": "paperless_id", "number": {"equals": paperless_id}}
@@ -209,6 +302,12 @@ class NotionClient:
 
     def _get_correspondent_page_id(self, paperless_id: int) -> str:
         """Get Notion page ID for a correspondent by its Paperless ID"""
+        # Ensure paperless_id is an integer
+        if isinstance(paperless_id, dict):
+            paperless_id = paperless_id.get('id')
+        paperless_id = int(paperless_id)
+        
+        logger.debug(f"Getting correspondent page ID for paperless_id: {paperless_id}")
         results = self.client.databases.query(
             database_id=self.correspondents_db,
             filter={"property": "paperless_id", "number": {"equals": paperless_id}}

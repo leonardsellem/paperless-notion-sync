@@ -8,13 +8,18 @@ from clients.notion import NotionClient
 
 def setup_logging():
     """Configure logging"""
-    log_level = os.getenv("LOG_LEVEL", "INFO")
+    log_level = os.getenv("LOG_LEVEL", "DEBUG")
     logger.remove()
+    
+    # Create logs directory if it doesn't exist
+    os.makedirs("/app/logs", exist_ok=True)
+    
     logger.add(
-        "sync.log",
+        "/app/logs/sync.log",
         rotation="1 day",
         retention="7 days",
-        level=log_level
+        level=log_level,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
     )
     logger.add(lambda msg: print(msg), level=log_level)
 

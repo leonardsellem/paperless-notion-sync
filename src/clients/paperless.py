@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple, Set
 import requests
 from datetime import datetime
 from loguru import logger
+import json
 
 class PaperlessClient:
     def __init__(self):
@@ -18,7 +19,9 @@ class PaperlessClient:
         try:
             response = requests.request(method, url, headers=self.headers, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            logger.debug(f"API Response from {endpoint}: {json.dumps(data, indent=2)}")
+            return data
         except requests.exceptions.RequestException as e:
             logger.error(f"Error making request to Paperless-NGX: {e}")
             raise
@@ -29,12 +32,51 @@ class PaperlessClient:
         if modified_after:
             params["modified__after"] = modified_after.isoformat()
         
-        return self._make_request("documents/", params=params)["results"]
+        all_documents = []
+        page = 1
+        
+        while True:
+            params["page"] = page
+            response = self._make_request("documents/", params=params)
+            documents = response["results"]
+            
+            # Debug log each document
+            for doc in documents:
+                logger.debug(f"Document {doc['id']} structure: {json.dumps(doc, indent=2, default=str)}")
+            
+            all_documents.extend(documents)
+            
+            # Check if there are more pages
+            if response["next"]:
+                page += 1
+                logger.info(f"Fetching page {page} of documents...")
+            else:
+                break
+        
+        logger.info(f"Retrieved {len(all_documents)} documents in total")
+        return all_documents
 
     def get_all_document_ids(self) -> Set[int]:
         """Get all current document IDs from Paperless-NGX"""
-        documents = self._make_request("documents/")["results"]
-        return {doc["id"] for doc in documents}
+        all_ids = set()
+        page = 1
+        
+        while True:
+            response = self._make_request("documents/", params={"page": page})
+            documents = response["results"]
+            
+            # Add document IDs to the set
+            all_ids.update(doc["id"] for doc in documents)
+            
+            # Check if there are more pages
+            if response["next"]:
+                page += 1
+                logger.debug(f"Fetching page {page} of document IDs...")
+            else:
+                break
+        
+        logger.info(f"Retrieved {len(all_ids)} document IDs in total")
+        return all_ids
 
     def get_document(self, doc_id: int) -> Optional[Dict]:
         """Get a specific document's details"""

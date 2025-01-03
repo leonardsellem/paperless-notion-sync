@@ -5,7 +5,7 @@ services:
     build: .
     volumes:
       - ./config:/app/config
-      - ./sync.log:/app/sync.log
+      - ./logs:/app/logs
     environment:
       - TZ=UTC
     restart: unless-stopped
@@ -14,4 +14,5 @@ services:
 
 networks:
   paperless_network:
-    external: true 
+    external: true
+    # name: your_paperless_network_name  # Uncomment and change this to match your Paperless network name 
