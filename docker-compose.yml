@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  paperless-notion-sync:
+    build: .
+    volumes:
+      - ./config:/app/config
+      - ./sync.log:/app/sync.log
+    environment:
+      - TZ=UTC
+    restart: unless-stopped
+    networks:
+      - paperless_network
+
+networks:
+  paperless_network:
+    external: true 

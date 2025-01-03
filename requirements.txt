@@ -1,0 +1,6 @@
+python-dotenv==1.0.0
+requests==2.31.0
+notion-client==2.2.1
+pydantic==2.5.3
+python-dateutil==2.8.2
+loguru==0.7.2 
