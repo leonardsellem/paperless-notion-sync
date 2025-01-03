@@ -7,7 +7,10 @@ This service synchronizes documents, tags, and correspondents from Paperless-NGX
 - Syncs documents with metadata (title, date, correspondent, tags)
 - Syncs tags with their properties
 - Syncs correspondents
+- Handles document updates and deletions
+- Uploads original document files to Notion
 - Incremental updates (only syncs changed items)
+- Archives documents in Notion when deleted from Paperless-NGX
 - Configurable sync interval
 - Docker support for easy deployment
 
@@ -47,6 +50,8 @@ Create three databases in Notion with the following properties:
 - Added Date (date)
 - Correspondent (relation to Correspondents database)
 - Tags (relation to Tags database)
+- File (files & media) - Stores the actual document PDF/file from Paperless-NGX
+- Archived (checkbox) - Indicates if the document was deleted in Paperless-NGX
 
 ### Tags Database
 - Name (title)
@@ -92,4 +97,14 @@ The service creates a `sync.log` file with detailed logging information. The log
 1. Check the logs in `sync.log`
 2. Verify your environment variables in `config/.env`
 3. Ensure your Paperless-NGX instance is accessible
-4. Verify your Notion integration has access to the databases 
+4. Verify your Notion integration has access to the databases
+
+## Sync Behavior
+
+The service handles different scenarios as follows:
+
+1. **New Documents**: When a new document is added to Paperless-NGX, it's created in Notion with all its metadata and the original file.
+
+2. **Updated Documents**: When a document is modified in Paperless-NGX (metadata or file), the corresponding Notion page is updated.
+
+3. **Deleted Documents**: When a document is deleted from Paperless-NGX, the corresponding Notion page is marked as "Archived" instead of being deleted. This preserves the document history while indicating it's no longer active. 

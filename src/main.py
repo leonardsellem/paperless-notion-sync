@@ -50,10 +50,36 @@ class PaperlessNotionSync:
     def sync_documents(self):
         """Sync documents from Paperless to Notion"""
         logger.info("Syncing documents...")
+        
+        # Get all current document IDs from both systems
+        paperless_doc_ids = self.paperless.get_all_document_ids()
+        notion_docs = self.notion.get_all_document_ids()
+        notion_doc_ids = set(notion_docs.keys())
+
+        # Find deleted documents
+        deleted_doc_ids = notion_doc_ids - paperless_doc_ids
+        for doc_id in deleted_doc_ids:
+            try:
+                self.notion.archive_document(notion_docs[doc_id])
+                logger.info(f"Archived document with ID {doc_id} in Notion")
+            except Exception as e:
+                logger.error(f"Error archiving document {doc_id}: {e}")
+
+        # Get modified documents since last sync
         documents = self.paperless.get_documents(modified_after=self.last_sync)
+        
+        # Update or create documents
         for document in documents:
             try:
-                self.notion.create_or_update_document(document)
+                # Get the document file
+                file_content, filename = self.paperless.get_document_file(document["id"])
+                
+                # Create or update the document in Notion with the file
+                self.notion.create_or_update_document(
+                    document=document,
+                    document_file=file_content,
+                    filename=filename
+                )
                 logger.debug(f"Synced document: {document['title']}")
             except Exception as e:
                 logger.error(f"Error syncing document {document['title']}: {e}")
